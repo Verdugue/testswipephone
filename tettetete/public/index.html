@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Swipe">
+<meta name="theme-color" content="#0c0c0e">
+<link rel="apple-touch-icon" href="/icon.png">
+<link id="manifest" rel="manifest" href="/app.webmanifest">
+<title>Swipe → PC</title>
+<style>
+:root {
+  --bg: #0c0c0e;
+  --surface: #18181b;
+  --surface-2: #27272b;
+  --line: rgba(255, 255, 255, .1);
+  --text: #f4f4f5;
+  --muted: #a1a1aa;
+  --send: #4ade80;
+  --send-ink: #06240f;
+  --skip: #fb7185;
+  --warn: #fbbf24;
+  --radius: 24px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overscroll-behavior: none; }
+body {
+  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  height: 100dvh;
+  overflow: hidden;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  -webkit-user-select: none;
+  user-select: none;
+}
+svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.vh { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; clip-path: inset(50%); }
+
+/* En-tête */
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px 8px; min-height: 60px; }
+.status { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 14px; color: var(--muted); }
+.status span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status b { color: var(--text); font-weight: 600; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+[data-net="online"] .dot { background: var(--send); box-shadow: 0 0 0 4px rgba(74, 222, 128, .16); }
+[data-net="offline"] .dot { background: var(--warn); }
+[data-net="badkey"] .dot, [data-net="nokey"] .dot { background: var(--skip); }
+.head-right { display: flex; align-items: center; gap: 12px; }
+.counter { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.icon-btn { width: 44px; height: 44px; border-radius: 50%; background: var(--surface); border: 1px solid var(--line); display: grid; place-items: center; color: var(--text); }
+.icon-btn:active { background: var(--surface-2); }
+
+/* Pile de photos */
+main { position: relative; margin: 4px 16px 0; min-height: 0; }
+.card {
+  position: absolute; inset: 0 0 28px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+  touch-action: none;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+  transition: transform .3s cubic-bezier(.2, .8, .3, 1), opacity .3s;
+  will-change: transform;
+  -webkit-touch-callout: none;
+}
+.card[data-depth="1"] { transform: translateY(14px) scale(.95); }
+.card[data-depth="2"] { transform: translateY(28px) scale(.9); opacity: .65; }
+.card.dragging { transition: none; }
+.card.enter { animation: enter .28s cubic-bezier(.2, .8, .3, 1); }
+@keyframes enter { from { transform: scale(.9); opacity: 0; } }
+.card img { width: 100%; height: 100%; object-fit: contain; display: block; pointer-events: none; -webkit-user-drag: none; }
+
+.badge {
+  position: absolute; top: 22px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px;
+  border: 3px solid; border-radius: 12px;
+  background: rgba(0, 0, 0, .45);
+  font-weight: 800; font-size: 20px; letter-spacing: .05em; text-transform: uppercase;
+  transition: opacity .15s;
+}
+.dragging .badge { transition: none; }
+.badge-send { right: 20px; color: var(--send); transform: rotate(9deg); opacity: var(--p-send, 0); }
+.badge-skip { left: 20px; color: var(--skip); transform: rotate(-9deg); opacity: var(--p-skip, 0); }
+
+/* Lueur sur le bord gauche : « ça part vers le PC » */
+#edge {
+  position: fixed; left: 0; top: 0; bottom: 0; width: 40vw; z-index: 1;
+  display: flex; align-items: center;
+  padding-left: calc(16px + env(safe-area-inset-left));
+  background: linear-gradient(90deg, rgba(74, 222, 128, .3), rgba(74, 222, 128, 0));
+  color: var(--send);
+  opacity: 0; pointer-events: none;
+  transition: opacity .3s;
+}
+body.dragging #edge { transition: none; }
+#edge svg { width: 34px; height: 34px; }
+
+/* Écran vide */
+#empty {
+  position: absolute; inset: 0 0 28px;
+  display: grid; place-items: center;
+  padding: 24px;
+  border: 1.5px dashed var(--line); border-radius: var(--radius);
+  text-align: center;
+}
+#ready, #noKey { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.shoot { display: flex; flex-direction: column; align-items: center; gap: 16px; font-size: 19px; font-weight: 600; }
+.ring { width: 104px; height: 104px; border-radius: 50%; background: var(--text); color: var(--bg); display: grid; place-items: center; transition: transform .12s; }
+.shoot:active .ring { transform: scale(.94); }
+.ring svg { width: 42px; height: 42px; }
+.from-lib { color: var(--send); font-weight: 600; padding: 8px 14px; }
+.hint { margin: 6px 0 0; color: var(--muted); font-size: 14px; max-width: 270px; }
+.hint b { color: var(--text); font-weight: 600; }
+.sent { margin: 0; font-size: 14px; color: var(--send); min-height: 20px; }
+#noKey svg { width: 44px; height: 44px; color: var(--muted); }
+#noKey p { margin: 0; }
+
+/* Ligne d'état des envois */
+#tray { position: relative; height: 40px; margin: 0 16px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; color: var(--muted); }
+#tray[data-state="ok"] { color: var(--send); }
+#tray[data-state="wait"] { color: var(--warn); }
+#tray[data-state="busy"] { color: var(--text); }
+.bar { position: absolute; left: 22%; right: 22%; bottom: 3px; height: 3px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--send); transition: width .2s; }
+
+/* Boutons du bas */
+footer { display: flex; align-items: flex-start; justify-content: center; gap: 30px; padding: 4px 16px 12px; }
+.act-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 76px; font-size: 12px; color: var(--muted); }
+.act { width: 60px; height: 60px; margin: 8px 0; border-radius: 50%; border: 0; padding: 0; display: grid; place-items: center; background: var(--surface-2); color: var(--text); transition: transform .12s, opacity .2s; }
+.act:active { transform: scale(.92); }
+.act:disabled { opacity: .35; }
+.act.send { background: var(--send); color: var(--send-ink); }
+.act.skip { color: var(--skip); }
+.act.cam { width: 76px; height: 76px; margin: 0; background: var(--text); color: var(--bg); }
+.act.cam svg { width: 30px; height: 30px; }
+
+/* Annuler un « ignorer » */
+#toast {
+  position: fixed; left: 50%; top: calc(env(safe-area-inset-top) + 68px); z-index: 100;
+  display: flex; align-items: center; gap: 12px;
+  padding: 6px 6px 6px 16px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px;
+  font-size: 14px; white-space: nowrap;
+  opacity: 0; transform: translate(-50%, -16px); pointer-events: none;
+  transition: opacity .2s, transform .2s;
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+#toast button { font: inherit; font-weight: 600; border: 0; border-radius: 999px; padding: 8px 14px; background: var(--text); color: var(--bg); }
+</style>
+</head>
+<body data-net="checking">
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M3 8.5h3.5L8.5 5h7l2 3.5H21V19H3z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-images" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 15l-4.5-4.5L7 19"/></symbol>
+</svg>
+
+<header>
+  <div class="status"><span class="dot"></span><span id="statusText">Connexion au PC…</span></div>
+  <div class="head-right">
+    <span id="counter" class="counter"></span>
+    <label class="icon-btn" for="libInput" aria-label="Choisir dans la galerie"><svg class="i"><use href="#i-images"/></svg></label>
+  </div>
+</header>
+
+<main id="stage">
+  <div id="empty">
+    <div id="ready">
+      <label class="shoot" for="camInput">
+        <span class="ring"><svg class="i"><use href="#i-camera"/></svg></span>
+        Prendre une photo
+      </label>
+      <label class="from-lib" for="libInput">ou choisir dans la galerie</label>
+      <p class="hint">Glisse la photo vers la <b>gauche</b> pour l'envoyer sur le PC, vers la droite pour l'ignorer.</p>
+      <p id="sentNote" class="sent"></p>
+    </div>
+    <div id="noKey" hidden>
+      <svg class="i"><use href="#i-monitor"/></svg>
+      <p><b>Pas encore relié au PC</b></p>
+      <p class="hint">Lance Swipe sur le PC, puis scanne le QR code affiché à l'écran avec l'appareil photo de l'iPhone.</p>
+    </div>
+  </div>
+</main>
+
+<div id="tray" role="status"><span id="trayText"></span><span class="bar" hidden><i id="bar"></i></span></div>
+
+<footer>
+  <div class="act-wrap">
+    <button id="btnSend" class="act send" type="button" aria-label="Envoyer sur le PC" disabled><svg class="i"><use href="#i-arrow"/></svg></button>
+    <span>PC</span>
+  </div>
+  <div class="act-wrap">
+    <label class="act cam" for="camInput" aria-label="Prendre une photo"><svg class="i"><use href="#i-camera"/></svg></label>
+    <span>Photo</span>
+  </div>
+  <div class="act-wrap">
+    <button id="btnSkip" class="act skip" type="button" aria-label="Ignorer la photo" disabled><svg class="i"><use href="#i-x"/></svg></button>
+    <span>Ignorer</span>
+  </div>
+</footer>
+
+<div id="edge" aria-hidden="true"><svg class="i"><use href="#i-monitor"/></svg></div>
+<div id="toast" role="status"><span>Photo ignorée</span><button id="undo" type="button">Annuler</button></div>
+
+<input id="camInput" class="vh" type="file" accept="image/*" capture="environment">
+<input id="libInput" class="vh" type="file" accept="image/*" multiple>
+
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const stage = $('#stage');
+const empty = $('#empty');
+const edge = $('#edge');
+const toast = $('#toast');
+const btnSend = $('#btnSend');
+const btnSkip = $('#btnSkip');
+
+// ---------- État ----------
+let key = '';            // clé d'appairage, fournie par le QR code du PC
+let net = 'checking';    // checking | online | offline | badkey | nokey
+let pcName = '';
+let stack = [];          // photos à trier, la première est au-dessus
+let seq = 0;
+const queue = [];        // photos en cours d'envoi
+let busy = false;
+let retryTimer = null;
+let sent = 0;
+let flashText = '';
+let flashTimer = null;
+let undoCard = null;
+let undoTimer = null;
+
+const plural = (n, word) => `${n} ${word}${n > 1 ? 's' : ''}`;
+
+// ---------- Clé d'appairage ----------
+key = new URLSearchParams(location.search).get('k') || '';
+try {
+  if (key) {
+    localStorage.setItem('swipe-key', key);
+  } else {
+    key = localStorage.getItem('swipe-key') || '';
+    // On remet la clé dans l'adresse pour que « Sur l'écran d'accueil » l'emporte avec lui.
+    if (key) history.replaceState(null, '', '/?k=' + encodeURIComponent(key));
+  }
+} catch { /* stockage indisponible (navigation privée) */ }
+if (key) $('#manifest').href = '/app.webmanifest?k=' + encodeURIComponent(key);
+
+// ---------- Connexion au PC ----------
+function setNet(state) {
+  const was = net;
+  net = state;
+  document.body.dataset.net = state;
+  const label = $('#statusText');
+  if (state === 'online') {
+    const b = document.createElement('b');
+    b.textContent = pcName || 'PC';
+    label.replaceChildren('Relié à ', b);
+  } else {
+    label.textContent = {
+      checking: 'Connexion au PC…',
+      offline: 'PC injoignable',
+      badkey: 'Clé invalide',
+      nokey: 'Pas relié au PC',
+    }[state];
+  }
+  renderEmpty();
+  renderTray();
+  if (state === 'online' && was !== 'online') pump();
+}
+
+async function ping() {
+  if (!key) return setNet('nokey');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 3500);
+  try {
+    const r = await fetch('/api/ping', { headers: { 'X-Swipe-Key': key }, cache: 'no-store', signal: ctrl.signal });
+    if (r.status === 403) return setNet('badkey');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    pcName = (await r.json()).pc || 'PC';
+    setNet('online');
+  } catch {
+    setNet('offline');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ---------- Pile de photos ----------
+function addFiles(fileList, onTop) {
+  const items = Array.from(fileList)
+    .filter((f) => !f.type || f.type.startsWith('image/'))
+    .map((file) => ({ id: ++seq, file, url: URL.createObjectURL(file), el: null }));
+  if (!items.length) return;
+  stack = onTop ? items.concat(stack) : stack.concat(items);
+  render();
+}
+
+function render() {
+  for (const c of stack.slice(3)) {
+    if (c.el) { c.el.remove(); c.el = null; }
+  }
+  stack.slice(0, 3).forEach((c, i) => {
+    if (!c.el) {
+      c.el = makeCard(c);
+      stage.append(c.el);
+    }
+    c.el.dataset.depth = String(i);
+    c.el.style.zIndex = String(10 - i);
+  });
+  empty.hidden = stack.length > 0;
+  btnSend.disabled = btnSkip.disabled = stack.length === 0;
+  $('#counter').textContent = stack.length > 1 ? `1 / ${stack.length}` : '';
+  renderEmpty();
+  renderTray();
+}
+
+function renderEmpty() {
+  const noKey = net === 'nokey' || net === 'badkey';
+  $('#ready').hidden = noKey;
+  $('#noKey').hidden = !noKey;
+  $('#sentNote').textContent = sent
+    ? `${plural(sent, 'photo')} envoyée${sent > 1 ? 's' : ''} sur ${pcName || 'le PC'}`
+    : '';
+}
+
+function makeCard(card) {
+  const el = document.createElement('div');
+  el.className = 'card enter';
+  const img = document.createElement('img');
+  img.alt = '';
+  img.draggable = false;
+  img.src = card.url;
+  const send = document.createElement('div');
+  send.className = 'badge badge-send';
+  send.innerHTML = '<svg class="i"><use href="#i-arrow"/></svg>PC';
+  const skip = document.createElement('div');
+  skip.className = 'badge badge-skip';
+  skip.textContent = 'Ignorer';
+  el.append(img, send, skip);
+  el.addEventListener('animationend', () => el.classList.remove('enter'), { once: true });
+  attachDrag(el, card);
+  return el;
+}
+
+// Distance à parcourir pour valider le geste.
+const threshold = () => Math.min(120, stage.clientWidth * 0.28);
+
+function paintDrag(el, dx, dy) {
+  el.style.transform = `translate(${dx}px, ${dy * 0.35}px) rotate(${dx / 16}deg)`;
+  const p = Math.max(-1, Math.min(1, dx / threshold()));
+  el.style.setProperty('--p-send', Math.max(0, -p).toFixed(3));
+  el.style.setProperty('--p-skip', Math.max(0, p).toFixed(3));
+  edge.style.opacity = Math.max(0, -p).toFixed(3);
+}
+
+function resetDrag(el) {
+  el.style.transform = '';
+  el.style.setProperty('--p-send', '0');
+  el.style.setProperty('--p-skip', '0');
+  edge.style.opacity = '0';
+}
+
+function attachDrag(el, card) {
+  let pid = null;
+  let startX = 0, startY = 0, dx = 0, dy = 0;
+  let samples = [];
+
+  el.addEventListener('pointerdown', (e) => {
+    if (pid !== null || stack[0] !== card) return;
+    pid = e.pointerId;
+    el.setPointerCapture(pid);
+    startX = e.clientX;
+    startY = e.clientY;
+    dx = dy = 0;
+    samples = [{ x: e.clientX, t: e.timeStamp }];
+    el.classList.remove('enter');
+    el.classList.add('dragging');
+    document.body.classList.add('dragging');
+  });
+
+  el.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== pid) return;
+    dx = e.clientX - startX;
+    dy = e.clientY - startY;
+    samples.push({ x: e.clientX, t: e.timeStamp });
+    if (samples.length > 5) samples.shift();
+    paintDrag(el, dx, dy);
+  });
+
+  const release = (e, cancelled) => {
+    if (e.pointerId !== pid) return;
+    pid = null;
+    el.classList.remove('dragging');
+    document.body.classList.remove('dragging');
+    const first = samples[0];
+    const last = samples[samples.length - 1];
+    const speed = last.t > first.t ? (last.x - first.x) / (last.t - first.t) : 0; // px par ms
+    const limit = threshold();
+    if (!cancelled && stack[0] === card) {
+      if (dx < -limit || (speed < -0.6 && dx < -30)) return decide('send', dy);
+      if (dx > limit || (speed > 0.6 && dx > 30)) return decide('skip', dy);
+    }
+    resetDrag(el);
+  };
+  el.addEventListener('pointerup', (e) => release(e, false));
+  el.addEventListener('pointercancel', (e) => release(e, true));
+}
+
+// Fait partir la photo du dessus : à gauche vers le PC, à droite à la poubelle.
+function decide(dir, dy = 0) {
+  const card = stack.shift();
+  if (!card) return;
+  const el = card.el;
+  card.el = null;
+  if (el) {
+    const sign = dir === 'send' ? -1 : 1;
+    el.classList.remove('dragging', 'enter');
+    el.style.setProperty(dir === 'send' ? '--p-send' : '--p-skip', '1');
+    el.style.transition = 'transform .34s cubic-bezier(.3, .5, .4, 1), opacity .34s ease-in';
+    el.getBoundingClientRect(); // fige le point de départ de l'animation
+    el.style.transform = `translate(${sign * innerWidth * 1.25}px, ${dy * 0.35 + 40}px) rotate(${sign * 24}deg)`;
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 380);
+  }
+  edge.style.opacity = dir === 'send' ? '1' : '0';
+  setTimeout(() => { if (!document.body.classList.contains('dragging')) edge.style.opacity = '0'; }, 260);
+  if (dir === 'send') enqueue(card);
+  else offerUndo(card);
+  render();
+}
+
+// ---------- Annuler un « ignorer » ----------
+function offerUndo(card) {
+  if (undoCard) URL.revokeObjectURL(undoCard.url);
+  undoCard = card;
+  toast.classList.add('show');
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => {
+    toast.classList.remove('show');
+    if (undoCard) URL.revokeObjectURL(undoCard.url);
+    undoCard = null;
+  }, 4500);
+}
+
+$('#undo').addEventListener('click', () => {
+  if (!undoCard) return;
+  clearTimeout(undoTimer);
+  toast.classList.remove('show');
+  stack.unshift(undoCard);
+  undoCard = null;
+  render();
+});
+
+// ---------- Envoi vers le PC ----------
+function enqueue(card) {
+  queue.push({ card, progress: 0, tries: 0 });
+  pump();
+}
+
+function pump() {
+  renderTray();
+  if (busy || !queue.length || !key || net === 'badkey') return;
+  clearTimeout(retryTimer);
+  retryTimer = null;
+  busy = true;
+  const job = queue[0];
+  upload(job)
+    .then(() => {
+      queue.shift();
+      sent++;
+      URL.revokeObjectURL(job.card.url);
+      flash(`Arrivée sur ${pcName || 'le PC'}`);
+      if (net !== 'online') setNet('online');
+      renderEmpty();
+    })
+    .catch((err) => {
+      job.progress = 0;
+      if (err.status === 403) return setNet('badkey');
+      if (err.status === 413) {
+        queue.shift();
+        return flash('Photo trop volumineuse, non envoyée');
+      }
+      job.tries++;
+      retryTimer = setTimeout(pump, Math.min(15000, 1000 * 2 ** job.tries));
+      setNet('offline');
+    })
+    .finally(() => {
+      busy = false;
+      if (retryTimer) renderTray();
+      else pump();
+    });
+  renderTray();
+}
+
+function upload(job) {
+  return new Promise((resolve, reject) => {
+    const file = job.card.file;
+    const qs = new URLSearchParams({ name: file.name || '', t: String(file.lastModified || Date.now()) });
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload?' + qs);
+    xhr.setRequestHeader('X-Swipe-Key', key);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.timeout = 120000;
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return;
+      job.progress = e.loaded / e.total;
+      renderTray();
+    };
+    xhr.onload = () => {
+      if (xhr.status === 200) return resolve();
+      reject(Object.assign(new Error('HTTP ' + xhr.status), { status: xhr.status }));
+    };
+    xhr.onerror = xhr.ontimeout = xhr.onabort = () => reject(new Error('réseau'));
+    xhr.send(file);
+  });
+}
+
+function flash(text) {
+  flashText = text;
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { flashText = ''; renderTray(); }, 2400);
+  renderTray();
+}
+
+function renderTray() {
+  const n = queue.length;
+  let state = '';
+  let text = '';
+  let p = 0;
+  if (n && net === 'badkey') {
+    state = 'wait';
+    text = `${plural(n, 'photo')} en attente · rescanne le QR code du PC`;
+  } else if (n && (net === 'offline' || retryTimer)) {
+    state = 'wait';
+    text = `${plural(n, 'photo')} en attente · PC injoignable`;
+  } else if (n) {
+    state = 'busy';
+    p = queue[0].progress;
+    text = n > 1 ? `Envoi… encore ${n} photos` : `Envoi… ${Math.round(p * 100)} %`;
+  } else if (flashText) {
+    state = 'ok';
+    text = flashText;
+  } else if (stack.length > 1) {
+    text = `${stack.length} photos à trier`;
+  }
+  $('#tray').dataset.state = state;
+  $('#trayText').textContent = text;
+  $('#bar').style.width = `${Math.round(p * 100)}%`;
+  $('#bar').parentElement.hidden = state !== 'busy';
+}
+
+// ---------- Branchements ----------
+$('#camInput').addEventListener('change', (e) => { addFiles(e.target.files, true); e.target.value = ''; });
+$('#libInput').addEventListener('change', (e) => { addFiles(e.target.files, false); e.target.value = ''; });
+btnSend.addEventListener('click', () => decide('send'));
+btnSkip.addEventListener('click', () => decide('skip'));
+addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft') decide('send');
+  else if (e.key === 'ArrowRight') decide('skip');
+});
+document.addEventListener('visibilitychange', () => { if (!document.hidden) ping(); });
+setInterval(() => { if (!document.hidden) ping(); }, 4000);
+
+setNet(key ? 'checking' : 'nokey');
+render();
+ping();
+</script>
+</body>
+</html>
